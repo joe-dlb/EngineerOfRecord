@@ -1,0 +1,977 @@
+@page "/"
+@inject IDbContextFactory<EorDbContext> DbFactory
+@rendermode InteractiveServer
+
+<PageTitle>EOR Registry</PageTitle>
+
+<!-- Stats -->
+<div class="stats-row">
+    <div class="stat-card">
+        <div class="stat-val">@engineers.Count</div>
+        <div class="stat-label">Total EORs</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-val">@engineers.Count(e => e.IsActive)</div>
+        <div class="stat-label">Active</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-val" style="color: var(--red)">@engineers.Count(e => e.IsLicenseExpired)</div>
+        <div class="stat-label">Expired Licenses</div>
+    </div>
+</div>
+
+<!-- Header + Filters -->
+<div class="section-row">
+    <div class="section-title">
+        EOR Registry
+        <span style="color: var(--text3); font-weight: 400; font-size: 13px">(@filteredEngineers.Count)</span>
+    </div>
+    <button class="btn btn-primary" @onclick="OpenAddModal">+ Add EOR</button>
+</div>
+
+<div class="filter-bar">
+    <select class="form-select" @bind="filterDiscipline" @bind:after="ApplyFilters">
+        <option value="">All Disciplines</option>
+        @foreach (var d in Enum.GetValues<Discipline>())
+        {
+            <option value="@d">@d</option>
+        }
+    </select>
+    <select class="form-select" @bind="filterState" @bind:after="ApplyFilters">
+        <option value="">All States</option>
+        @foreach (var s in Enum.GetValues<UsState>())
+        {
+            <option value="@s">@s</option>
+        }
+    </select>
+    <select class="form-select" @bind="filterActive" @bind:after="ApplyFilters">
+        <option value="">All Status</option>
+        <option value="active">Active Only</option>
+        <option value="inactive">Inactive Only</option>
+    </select>
+    @if (!string.IsNullOrEmpty(filterDiscipline) || !string.IsNullOrEmpty(filterState) || !string.IsNullOrEmpty(filterActive))
+    {
+        <button class="btn btn-sm" @onclick="ClearFilters">Clear</button>
+    }
+</div>
+
+<!-- Table -->
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Discipline</th>
+                <th>Licensed States</th>
+                <th>License Expires</th>
+                <th>Status</th>
+                <th style="width: 100px">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (filteredEngineers.Count == 0)
+            {
+                <tr>
+                    <td colspan="6">
+                        <div class="empty-state">No EORs found. Add one to get started.</div>
+                    </td>
+                </tr>
+            }
+            @foreach (var eor in filteredEngineers)
+            {
+                <tr>
+                    <td>
+                        <div style="display: flex; align-items: center; gap: 8px">
+                            <div class="avatar @AvatarClass(eor.Discipline)">@Initials(eor.Employee)</div>
+                            <div>
+                                <div style="font-weight: 500">@eor.Employee.DisplayName</div>
+                                <div style="font-size: 11px; color: var(--text3)">@eor.Employee.Title</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="badge @BadgeClass(eor.Discipline)">@eor.Discipline</span>
+                    </td>
+                    <td>
+                        <div style="display: flex; flex-wrap: wrap; gap: 3px">
+                            @foreach (var s in eor.LicensedStates.Order())
+                            {
+                                <span class="badge badge-gray">@s</span>
+                            }
+                        </div>
+                    </td>
+                    <td style="@(eor.IsLicenseExpired ? "color: var(--red); font-weight: 500" : "")">
+                        @eor.LicenseExpiration.ToString("MMM d, yyyy")
+                        @if (eor.IsLicenseExpired)
+                        {
+                            <span class="badge badge-red" style="margin-left: 6px">Expired</span>
+                        }
+                    </td>
+                    <td>
+                        <span class="badge @(eor.IsActive ? "badge-green" : "badge-gray")">
+                            @(eor.IsActive ? "Active" : "Inactive")
+                        </span>
+                    </td>
+                    <td>
+                        <div style="display: flex; gap: 4px">
+                            <button class="btn btn-sm" @onclick="() => OpenEditModal(eor)">Edit</button>
+                            <button class="btn btn-sm btn-danger" @onclick="() => DeleteEor(eor)">Del</button>
+                        </div>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<!-- Modal -->
+@if (showModal)
+{
+    <div class="modal-overlay" @onclick="CloseModal">
+        <div class="eor-modal" @onclick:stopPropagation>
+            <div class="eor-modal-header">
+                <div class="eor-modal-title">@(isEditing ? "Edit EOR" : "Add EOR")</div>
+                <button class="btn btn-sm" @onclick="CloseModal">X</button>
+            </div>
+            <div class="eor-modal-body">
+                @if (!isEditing)
+                {
+                    <div class="form-row">
+                        <label class="form-label">Employee (from local VP copy)</label>
+                        <select class="form-select" @bind="form.SelectedEmployeeId">
+                            <option value="">-- Select an employee --</option>
+                            @foreach (var emp in availableEmployees)
+                            {
+                                <option value="@emp.VantagepointEmployeeId">@emp.DisplayName — @emp.Title</option>
+                            }
+                        </select>
+                    </div>
+                }
+                else
+                {
+                    <div class="form-row">
+                        <label class="form-label">Employee</label>
+                        <input class="form-input" value="@form.EmployeeDisplay" disabled />
+                    </div>
+                }
+                <div class="form-row-2">
+                    <div>
+                        <label class="form-label">Discipline</label>
+                        <select class="form-select" @bind="form.Discipline">
+                            @foreach (var d in Enum.GetValues<Discipline>())
+                            {
+                                <option value="@d">@d</option>
+                            }
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label">License Expiration</label>
+                        <input class="form-input" type="date" @bind="form.LicenseExpiration" />
+                    </div>
+                </div>
+                <div class="form-row-2">
+                    <div>
+                        <label class="form-label">Status</label>
+                        <select class="form-select" @bind="form.IsActive">
+                            <option value="true">Active</option>
+                            <option value="false">Inactive</option>
+                        </select>
+                    </div>
+                    <div></div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label">Licensed States</label>
+                    <div class="states-grid">
+                        @foreach (var state in Enum.GetValues<UsState>())
+                        {
+                            <label class="state-check">
+                                <input type="checkbox" checked="@form.SelectedStates.Contains(state)"
+                                       @onchange="e => ToggleState(state, (bool)e.Value!)" />
+                                @state
+                            </label>
+                        }
+                    </div>
+                </div>
+            </div>
+            <div class="eor-modal-footer">
+                <button class="btn" @onclick="CloseModal">Cancel</button>
+                <button class="btn btn-primary" @onclick="SaveEor">
+                    @(isEditing ? "Update" : "Add") EOR
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!--  ARCHITECTURE & PITCH                                              -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+
+<div class="demo-page" style="margin-top: 48px">
+
+    <section class="doc-section">
+        <h1 class="section-heading">Software Architecture</h1>
+        <p class="section-desc">
+            How the EOR application is structured, why we made specific design decisions,
+            and how data flows between our database and Vantagepoint.
+        </p>
+
+        <h2 class="sub-heading">Three Pillars</h2>
+        <div class="pillars-grid">
+            <div class="pillar-card">
+                <div class="pillar-num">1</div>
+                <h3>Domain Model</h3>
+                <p>
+                    Plain C# classes that represent the business concepts &mdash; <code>EngineerOfRecord</code>,
+                    <code>Employee</code>, <code>Discipline</code>, <code>UsState</code>. No database annotations, no framework dependencies.
+                    The domain layer has zero NuGet packages. It's pure business logic that anyone can read.
+                </p>
+            </div>
+            <div class="pillar-card">
+                <div class="pillar-num">2</div>
+                <h3>EF Core Persistence</h3>
+                <p>
+                    A <code>DbContext</code> that maps domain entities to SQL Server tables. Configuration is in C#, schema
+                    changes are versioned as migrations, and the database is created automatically on first run.
+                    No stored procedures. No database project. No DACPAC deployments.
+                </p>
+            </div>
+            <div class="pillar-card">
+                <div class="pillar-num">3</div>
+                <h3>Vantagepoint Sync</h3>
+                <p>
+                    All active employees are copied from Vantagepoint into a local Employee table and kept in sync.
+                    This makes our app Vantagepoint-agnostic at query time &mdash; if VP goes down,
+                    the EOR app still works with the last-synced data.
+                </p>
+            </div>
+        </div>
+
+        <h2 class="sub-heading">Data Ownership: Local Copy vs. Database Views</h2>
+        <p>
+            The core challenge is that an <code>EngineerOfRecord</code> combines data from two sources:
+            our custom fields (discipline, license, states) and Vantagepoint fields (name, email, title).
+            These two approaches were evaluated:
+        </p>
+
+        <div class="comparison-grid">
+            <div class="comparison-card rejected">
+                <h3>Option A: Database Views <span class="badge badge-red">Rejected</span></h3>
+                <p>Create a SQL view that JOINs our table to <code>Vantagepoint_DevOps.dbo.EM</code>. Configure
+                EF Core with <code>ToTable()</code> for writes and <code>ToView()</code> for reads.</p>
+                <div class="pros-cons">
+                    <div class="pro">Single query returns hydrated data</div>
+                    <div class="pro">No sync service needed</div>
+                    <div class="con">Runtime dependency on Vantagepoint &mdash; if VP is down, our reads break</div>
+                    <div class="con">Cross-database JOINs can't be indexed from our side</div>
+                    <div class="con">View lives outside EF Core migrations &mdash; cracks the "everything is code" story</div>
+                    <div class="con">Complex <code>PropertySaveBehavior.Ignore</code> config for read-only VP columns</div>
+                </div>
+                <div class="code-block">
+                    <div class="code-label">What it would look like in DbContext</div>
+                    <pre><code>// Reads from view, writes to table
+entity.ToTable("EngineerOfRecord");
+entity.ToView("vw_EngineerOfRecord");
+
+// Each VP field needs this to prevent EFC
+// from including it in INSERT/UPDATE statements
+entity.Property(x => x.EmployeeName)
+    .ValueGeneratedOnAddOrUpdate()
+    .Metadata.SetBeforeSaveBehavior(
+        PropertySaveBehavior.Ignore);</code></pre>
+                </div>
+            </div>
+
+            <div class="comparison-card accepted">
+                <h3>Option B: Local Copy + Sync <span class="badge badge-green">Chosen</span></h3>
+                <p>Copy all VP employees into a local <code>Employee</code> table. <code>EngineerOfRecord</code> has a FK
+                to <code>Employee</code> — clean separation, no duplicated fields.</p>
+                <div class="pros-cons">
+                    <div class="pro">One database, one DbContext, standard EF Core mapping &mdash; no tricks</div>
+                    <div class="pro">App works even if Vantagepoint is down (uses last-synced data)</div>
+                    <div class="pro">If DLB ever migrates off Vantagepoint, only the sync service changes</div>
+                    <div class="pro">Testing is trivial &mdash; seed test DB, no VP mock needed</div>
+                    <div class="con">Data is duplicated (employee names in two places)</div>
+                    <div class="con">Brief staleness window between VP change and next sync</div>
+                </div>
+                <div class="code-block">
+                    <div class="code-label">Two tables, one relationship</div>
+                    <pre><code>// Employee table — synced from VP, all active employees
+public class Employee {
+    public string VantagepointEmployeeId { get; init; } // PK
+    public string FirstName { get; set; }
+    public string LastName { get; set; }
+    public string Email { get; set; }
+    public string Title { get; set; }
+}
+
+// EOR table — pure domain data, FK to Employee
+public class EngineerOfRecord {
+    public Guid Id { get; private set; }
+    public string VantagepointEmployeeId { get; init; } // FK
+    public Employee Employee { get; init; } // navigation
+    public Discipline Discipline { get; set; }
+    public List&lt;UsState&gt; LicensedStates { get; set; }
+}
+
+// Query with auto-JOIN via Include
+var eors = await db.Engineers
+    .Include(e => e.Employee)
+    .Where(e => e.IsActive)
+    .ToListAsync();
+
+eor.Employee.DisplayName  // from Employee table
+eor.Discipline            // from EOR table</code></pre>
+                </div>
+            </div>
+        </div>
+
+        <p>
+            The staleness tradeoff is acceptable because employee metadata (names, emails, titles)
+            changes infrequently. Even a 15-minute poll cycle is more than sufficient. For employee data,
+            we're talking about 831 active records &mdash; the diff query typically returns 0 rows.
+        </p>
+
+        <h2 class="sub-heading">Sync Architecture: Polling + Webhooks</h2>
+        <p>
+            Two mechanisms keep our local data fresh. Both call the same shared handler &mdash;
+            the only difference is what triggers them.
+        </p>
+
+        <div class="arch-diagram">
+            <div class="arch-box vp">Vantagepoint (DLB-SQL04)</div>
+            <div class="arch-flow-row">
+                <div class="arch-flow-col">
+                    <div class="arch-arrow-down">&darr; <span class="arch-label">data changes</span></div>
+                    <div class="arch-box endpoint">MapPost Endpoint</div>
+                    <div class="arch-label">Webhook (real-time push)</div>
+                </div>
+                <div class="arch-flow-col">
+                    <div class="arch-arrow-down">&darr; <span class="arch-label">ModDate > lastSync</span></div>
+                    <div class="arch-box service">BackgroundService</div>
+                    <div class="arch-label">Polling (every 15 min)</div>
+                </div>
+            </div>
+            <div class="arch-arrow-down">&darr; both call the same method</div>
+            <div class="arch-box handler">VantagepointSyncHandler</div>
+            <div class="arch-sub">SyncEmployeeAsync() &rarr; Upsert to Employee table</div>
+            <div class="arch-arrow-down">&darr;</div>
+            <div class="arch-box db">Employee Table (localhost)</div>
+        </div>
+
+        <div class="detail-grid">
+            <div class="detail-card">
+                <h3>Polling Service</h3>
+                <p>A <code>BackgroundService</code> that runs on startup and then every 15 minutes.
+                Queries <code>Vantagepoint_DevOps.dbo.EM</code> for rows where <code>ModDate > lastSyncTime</code>.</p>
+                <div class="code-block">
+                    <div class="code-label">Three behaviors, one query</div>
+                    <pre><code>// lastSyncTime determines what gets pulled:
+//   First run (empty table) -> full load (all 831 employees)
+//   After restart           -> max LastSynced -> catch up
+//   Normal tick             -> 15 min ago -> usually 0 rows
+
+var lastSync = await syncHandler.GetLastSyncTimeAsync();
+
+SELECT Employee, FirstName, LastName, PreferredName, EMail, Title
+FROM dbo.EM
+WHERE Status = 'A' AND ModDate > @@lastSyncTime
+ORDER BY ModDate DESC</code></pre>
+                </div>
+                <div class="code-block">
+                    <div class="code-label">Registration in Program.cs</div>
+                    <pre><code>builder.Services.AddSingleton&lt;VantagepointSyncHandler&gt;();
+builder.Services.AddHostedService&lt;VantagepointPollingService&gt;();</code></pre>
+                </div>
+            </div>
+
+            <div class="detail-card">
+                <h3>Webhook Endpoint</h3>
+                <p>Vantagepoint fires webhooks via Application Workflows
+                (Settings &gt; Workflow). When an employee changes, VP POSTs to our endpoint.</p>
+                <div class="code-block">
+                    <div class="code-label">The entire webhook receiver</div>
+                    <pre><code>app.MapPost("/api/vp-webhook/employee", async (
+    VantagepointWebhookPayload payload,
+    VantagepointSyncHandler syncHandler) =>
+{
+    var employee = new VantagepointSyncHandler
+        .VantagepointEmployee(
+            EmployeeId: payload.Employee,
+            FirstName: payload.FirstName ?? "",
+            LastName: payload.LastName ?? "",
+            PreferredName: payload.PreferredName ?? "",
+            Email: payload.EMail ?? "",
+            Title: payload.Title ?? "");
+
+    await syncHandler.SyncEmployeeAsync(employee);
+    return Results.Ok(new { status = "synced" });
+});</code></pre>
+                </div>
+                <p class="text-muted text-sm" style="margin-top: 10px">
+                    Note: Deltek is deprecating SOAP web services by 2026 and pushing everyone
+                    to REST API + webhooks. This approach is aligned with where Vantagepoint is headed.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <section class="doc-section">
+        <h1 class="section-heading">Why EF Core Over Dapper + Stored Procedures</h1>
+        <p class="section-desc">
+            Side-by-side comparisons of the same operations in both approaches.
+            The code on the left follows the patterns in ResourcePlanningv3. The code on the right
+            is what this project uses.
+        </p>
+
+        <h2 class="sub-heading">Reading Data</h2>
+        <div class="code-comparison">
+            <div class="code-side dapper">
+                <div class="code-side-label">Dapper + Stored Procedure</div>
+                <pre><code>// 1. Define the stored procedure constant
+public static class StoredProcedures
+{
+    public const string EOR_Read =
+        "ProjectManagement_EOR_Read";
+}
+
+// 2. Define the entity with SP mapping
+[Procedure("ProjectManagement_EOR_Read")]
+public class EorEntity : FilterableEntity
+{
+    [ProcedureParameter]
+    [Filter(Ignore = true)]
+    public string FilterSQL { get; set; }
+
+    public string Employee { get; set; }
+    public string FirstName { get; set; }
+    // ... every column manually mapped
+}
+
+// 3. Service method to read
+public async Task&lt;IReadOnlyList&lt;EorEntity&gt;&gt;
+    GetAllEors(string? filterSql = null)
+{
+    List&lt;Filter&gt; spParameters = new()
+    {
+        new() {
+            FilterField = nameof(EorEntity.FilterSQL),
+            FilterValue = filterSql ?? string.Empty
+        }
+    };
+    IEnumerable&lt;EorEntity&gt; entities =
+        await _dataAccess.Read&lt;EorEntity&gt;(
+            spParameters);
+    return entities?.ToList().AsReadOnly()
+        ?? new List&lt;EorEntity&gt;().AsReadOnly();
+}
+
+// 4. The stored procedure itself (in database)
+CREATE PROCEDURE ProjectManagement_EOR_Read
+    @@FilterSQL NVARCHAR(MAX) = ''
+AS
+BEGIN
+    SELECT e.*, vp.FirstName, vp.LastName ...
+    FROM dbo.EngineerOfRecord e
+    LEFT JOIN Vantagepoint_DevOps.dbo.EM vp
+        ON e.VantagepointEmployeeId = vp.Employee
+    WHERE 1=1
+    -- dynamic filter appended via sp_executesql
+END</code></pre>
+            </div>
+            <div class="code-side efcore">
+                <div class="code-side-label">EF Core</div>
+                <pre><code>// That's it.
+var eors = await db.Engineers
+    .Include(e => e.Employee)
+    .Where(e => e.IsActive)
+    .OrderBy(e => e.Employee.LastName)
+    .ToListAsync();</code></pre>
+                <div class="efcore-benefits">
+                    <div class="benefit-item">Strongly typed &mdash; compile-time checked</div>
+                    <div class="benefit-item">Parameterized &mdash; SQL injection safe</div>
+                    <div class="benefit-item">No stored procedure to maintain</div>
+                    <div class="benefit-item">No parameter dictionary to construct</div>
+                    <div class="benefit-item">No FilterableEntity base class needed</div>
+                </div>
+                <details class="filter-examples">
+                    <summary>More query examples</summary>
+                    <pre><code>// Filter by discipline
+var electrical = await db.Engineers
+    .Include(e => e.Employee)
+    .Where(e => e.Discipline == Discipline.Electrical)
+    .ToListAsync();
+
+// Filter by licensed state
+var californiaEors = await db.Engineers
+    .Where(e => e.LicensedStates.Contains(UsState.CA))
+    .ToListAsync();
+
+// Search by employee name
+var results = await db.Engineers
+    .Include(e => e.Employee)
+    .Where(e => e.Employee.LastName.Contains(search))
+    .ToListAsync();</code></pre>
+                </details>
+            </div>
+        </div>
+
+        <h2 class="sub-heading">Creating a Record</h2>
+        <div class="code-comparison">
+            <div class="code-side dapper">
+                <div class="code-side-label">Dapper + Stored Procedure</div>
+                <pre><code>// Service method
+public async Task CreateEorAsync(
+    string employeeId, string discipline,
+    DateTime expiration, bool isActive,
+    string states)
+{
+    var parameters = new
+    {
+        VantagepointEmployeeId = employeeId,
+        Discipline = discipline,
+        LicenseExpiration = expiration,
+        IsActive = isActive,
+        LicensedStates = states, // CSV string?
+        LastModifiedBy = username
+    };
+    await _dataStore.Read&lt;EorEntity&gt;(
+        "ProjectManagement_EOR_UpdateOrInsert",
+        parameters);
+}
+
+// Plus the stored procedure:
+CREATE PROCEDURE
+    ProjectManagement_EOR_UpdateOrInsert
+    @@VantagepointEmployeeId NVARCHAR(6),
+    @@Discipline NVARCHAR(20),
+    @@LicenseExpiration DATETIME2,
+    @@IsActive BIT,
+    @@LicensedStates NVARCHAR(MAX),
+    @@LastModifiedBy NVARCHAR(50)
+AS
+BEGIN
+    -- MERGE or IF EXISTS logic
+    -- Parse CSV states into rows
+    -- Insert/update accordingly
+END</code></pre>
+            </div>
+            <div class="code-side efcore">
+                <div class="code-side-label">EF Core</div>
+                <pre><code>// Create the entity — just set the FK + domain fields
+var eor = new EngineerOfRecord
+{
+    VantagepointEmployeeId = "001885",
+    Discipline = Discipline.Electrical,
+    LicenseExpiration = new DateTime(2028, 6, 1),
+    IsActive = true,
+    LicensedStates = [UsState.NJ, UsState.NY, UsState.PA]
+};
+
+db.Engineers.Add(eor);
+await db.SaveChangesAsync();
+
+// EFC generates the INSERT, serializes
+// the List as JSON ["NJ","NY","PA"],
+// uses the Guid from the constructor.
+// Employee data comes from the FK.
+// No stored procedure. No parameter mapping.</code></pre>
+            </div>
+        </div>
+
+        <h2 class="sub-heading">Updating a Record</h2>
+        <div class="code-comparison">
+            <div class="code-side dapper">
+                <div class="code-side-label">Dapper + Stored Procedure</div>
+                <pre><code>// Must pass ALL fields — SP doesn't know
+// which ones changed
+public async Task UpdateEorAsync(
+    Guid id, string discipline,
+    DateTime expiration, bool isActive,
+    string states)
+{
+    var parameters = new
+    {
+        Id = id,
+        Discipline = discipline,
+        LicenseExpiration = expiration,
+        IsActive = isActive,
+        LicensedStates = states,
+        LastModifiedBy = username
+    };
+    var result = await _dataStore.Execute(
+        "ProjectManagement_EOR_Update",
+        parameters);
+    return result > 0;
+}
+
+// Plus maintain the UPDATE stored procedure</code></pre>
+            </div>
+            <div class="code-side efcore">
+                <div class="code-side-label">EF Core</div>
+                <pre><code>// Load the entity — EFC starts tracking it
+var eor = await db.Engineers.FindAsync(id);
+
+// Change only what changed
+eor.Discipline = Discipline.Multi;
+eor.LicensedStates.Add(UsState.CT);
+
+// Save — EFC detects what changed and generates
+// an UPDATE with ONLY the modified columns
+await db.SaveChangesAsync();
+
+// Generated SQL:
+// UPDATE [EngineerOfRecord]
+// SET [Discipline] = 'Multi',
+//     [LicensedStates] = '["NJ","NY","PA","CT"]'
+// WHERE [Id] = @@p0
+//
+// Notice: only Discipline and LicensedStates
+// are in the SET clause. EFC's change tracker
+// knows the other fields didn't change.</code></pre>
+            </div>
+        </div>
+
+        <h2 class="sub-heading">Schema Changes</h2>
+        <div class="code-comparison">
+            <div class="code-side dapper">
+                <div class="code-side-label">Dapper + Database Project</div>
+                <pre><code>// 1. Add column to database project table def
+// 2. Update EVERY stored procedure that touches
+//    this table (Read, Insert, Update, Delete)
+// 3. Update the C# entity class
+// 4. Update parameter dictionaries in services
+// 5. Build the DACPAC
+// 6. Deploy the DACPAC to dev
+// 7. Deploy the DACPAC to staging
+// 8. Deploy the DACPAC to production
+// 9. Hope the SP changes and DACPAC deploy
+//    happen in the right order
+
+// Typical flow for adding one column:
+// ~5 files changed across 2 projects</code></pre>
+            </div>
+            <div class="code-side efcore">
+                <div class="code-side-label">EF Core Migrations</div>
+                <pre><code>// 1. Add property to C# entity
+public string PhoneNumber { get; set; }
+
+// 2. Generate migration (one command)
+dotnet ef migrations add AddPhoneNumber
+
+// 3. Auto-generated migration:
+migrationBuilder.AddColumn&lt;string&gt;(
+    name: "PhoneNumber",
+    table: "EngineerOfRecord",
+    type: "nvarchar(max)",
+    nullable: true);
+
+// 4. Apply (or auto-apply on startup)
+dotnet ef database update
+
+// 1 file changed. Migration is versioned in git.
+// Rollback: dotnet ef database update PreviousMigration
+// The schema IS the code.</code></pre>
+            </div>
+        </div>
+
+        <h2 class="sub-heading">The Deeper Point: Eliminating the Glue Layer</h2>
+        <p>
+            Zero stored procedures is the headline. But the deeper benefit is the elimination
+            of the entire connector layer between C# and SQL that a Dapper + SP approach requires.
+        </p>
+
+        <div class="detail-grid" style="margin: 16px 0 32px">
+            <div class="detail-card">
+                <h3>1. Parallel Maintenance</h3>
+                <p>
+                    Every stored procedure has a shadow in C# &mdash; parameter objects, mapping classes,
+                    procedure name constants. Change a column and you're updating two places.
+                    In our existing projects, <code>StoredProcedures.cs</code> alone is 579 lines of constants.
+                    Every service method constructs parameter dictionaries. Entity classes are decorated with
+                    <code>[Procedure]</code> and <code>[ProcedureParameter]</code> attributes just to wire
+                    the two worlds together. EF Core eliminates that entire connector layer.
+                </p>
+            </div>
+            <div class="detail-card">
+                <h3>2. Deployment Coordination</h3>
+                <p>
+                    SP changes need database deployments (DACPACs). Schema changes need to land
+                    <em>before</em> the code that uses them. That ordering constraint creates release friction
+                    and is a source of deployment failures. With EF Core Migrations, schema and code ship
+                    together &mdash; one <code>dotnet ef database update</code> or auto-migrate on startup, done.
+                </p>
+            </div>
+            <div class="detail-card">
+                <h3>3. Discoverability</h3>
+                <p>
+                    To understand how a record is saved in the Dapper approach: find the service &rarr;
+                    see it calls <code>"ProjectManagement_Materials_UpdateOrInsert"</code> &rarr;
+                    open SSMS or the Database project &rarr; find that SP &rarr; read the SQL.
+                    With EF Core, the entire operation is visible in C# &mdash; the what, the where,
+                    and the how are in one place.
+                </p>
+            </div>
+            <div class="detail-card">
+                <h3>4. Polling Checks Diffs, Not Full Tables</h3>
+                <p>
+                    The Vantagepoint sync service uses <code>ModDate > lastSyncTime</code> to pull only
+                    changed records. Out of 831 active employees, a typical poll returns 0&ndash;3 rows.
+                    On first run, it does a full load. After that, it's incremental. No full table scans,
+                    no expensive comparisons. The sync is practically free.
+                </p>
+            </div>
+        </div>
+
+        <p>
+            It's not just fewer SQL files &mdash; it's the elimination of the entire glue layer
+            between C# and SQL. That's where the real code reduction and bug reduction comes from.
+        </p>
+
+        <h2 class="sub-heading">A Note on Long-Term Risk</h2>
+        <div class="summary-note" style="margin-bottom: 24px; border-left: 3px solid var(--amber);">
+            <p>
+                Deltek has officially announced that <strong>SOAP-based web services will be deprecated by 2026</strong>
+                and is pushing all integrations to REST API + webhooks. Projects that currently hit Vantagepoint
+                via linked servers and cross-database JOINs in stored procedures are relying on a database-level
+                integration path that Deltek is moving away from.
+            </p>
+            <p>
+                This project's approach &mdash; a local Employee table synced via REST API polling and webhooks &mdash;
+                is aligned with where Deltek is headed. The sync service is the only component that touches Vantagepoint,
+                and it can be swapped from direct SQL to REST API calls without changing anything else in the application.
+            </p>
+        </div>
+
+        <h2 class="sub-heading">The Bottom Line</h2>
+        <div class="summary-grid">
+            <div class="summary-item">
+                <div class="summary-num">0</div>
+                <div class="summary-label">Stored procedures to maintain</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-num">0</div>
+                <div class="summary-label">DACPAC deployments</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-num">1</div>
+                <div class="summary-label">Line to query filtered data</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-num">1</div>
+                <div class="summary-label">Command to update schema</div>
+            </div>
+        </div>
+
+        <div class="summary-note">
+            <p>
+                EF Core is not a replacement for Dapper in all cases. Complex pivot queries, dynamic SQL reports,
+                and high-performance bulk operations may still benefit from raw SQL or Dapper.
+                EFC supports <code>FromSqlRaw()</code> for those cases &mdash; you can escape to raw SQL when needed
+                without abandoning the framework.
+            </p>
+            <p>
+                For this project &mdash; a greenfield CRUD application with a simple domain model, standard relational
+                data, and cross-database sync requirements &mdash; EF Core eliminates entire categories of boilerplate
+                and lets us focus on the business logic instead of the plumbing.
+            </p>
+        </div>
+    </section>
+
+</div>
+
+@code {
+    private List<Domain.EngineerOfRecord> engineers = [];
+    private List<Domain.EngineerOfRecord> filteredEngineers = [];
+    private List<Employee> availableEmployees = [];
+
+    // Filters
+    private string filterDiscipline = "";
+    private string filterState = "";
+    private string filterActive = "";
+
+    // Modal state
+    private bool showModal;
+    private bool isEditing;
+    private Guid? editingId;
+    private EorForm form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadEngineers();
+    }
+
+    // ── Data access: every operation creates a short-lived DbContext ──
+
+    private async Task LoadEngineers()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+
+        // Include(e => e.Employee) — EFC auto-JOINs the Employee table.
+        // This is one of the key advantages over Dapper: navigation properties.
+        engineers = await db.Engineers
+            .Include(e => e.Employee)
+            .OrderBy(e => e.Employee.LastName)
+            .ToListAsync();
+
+        ApplyFilters();
+    }
+
+    private async Task LoadAvailableEmployees()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+
+        // Get employee IDs already registered as EORs
+        var existingIds = await db.Engineers
+            .Select(e => e.VantagepointEmployeeId)
+            .ToListAsync();
+
+        // Show only employees not yet registered
+        availableEmployees = await db.Employees
+            .Where(e => !existingIds.Contains(e.VantagepointEmployeeId))
+            .OrderBy(e => e.LastName)
+            .ThenBy(e => e.FirstName)
+            .ToListAsync();
+    }
+
+    private async Task SaveEor()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+
+        if (isEditing && editingId.HasValue)
+        {
+            var eor = await db.Engineers.FindAsync(editingId.Value);
+            if (eor is null) return;
+
+            eor.Discipline = form.Discipline;
+            eor.LicenseExpiration = form.LicenseExpiration;
+            eor.IsActive = form.IsActive;
+            eor.LicensedStates = [.. form.SelectedStates];
+        }
+        else
+        {
+            if (string.IsNullOrEmpty(form.SelectedEmployeeId)) return;
+
+            var eor = new Domain.EngineerOfRecord
+            {
+                VantagepointEmployeeId = form.SelectedEmployeeId,
+                Discipline = form.Discipline,
+                LicenseExpiration = form.LicenseExpiration,
+                IsActive = form.IsActive,
+                LicensedStates = [.. form.SelectedStates]
+            };
+            db.Engineers.Add(eor);
+        }
+
+        await db.SaveChangesAsync();
+        CloseModal();
+        await LoadEngineers();
+    }
+
+    private async Task DeleteEor(Domain.EngineerOfRecord eor)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        await db.Engineers.Where(e => e.Id == eor.Id).ExecuteDeleteAsync();
+        await LoadEngineers();
+    }
+
+    // ── Filters ──
+
+    private void ApplyFilters()
+    {
+        var list = engineers.AsEnumerable();
+
+        if (Enum.TryParse<Discipline>(filterDiscipline, out var disc))
+            list = list.Where(e => e.Discipline == disc);
+
+        if (Enum.TryParse<UsState>(filterState, out var state))
+            list = list.Where(e => e.LicensedStates.Contains(state));
+
+        if (filterActive == "active")
+            list = list.Where(e => e.IsActive);
+        else if (filterActive == "inactive")
+            list = list.Where(e => !e.IsActive);
+
+        filteredEngineers = list.ToList();
+    }
+
+    private void ClearFilters()
+    {
+        filterDiscipline = "";
+        filterState = "";
+        filterActive = "";
+        ApplyFilters();
+    }
+
+    // ── Modal helpers ──
+
+    private async Task OpenAddModal()
+    {
+        isEditing = false;
+        editingId = null;
+        form = new EorForm { LicenseExpiration = DateTime.Today.AddYears(2), IsActive = true };
+        await LoadAvailableEmployees();
+        showModal = true;
+    }
+
+    private void OpenEditModal(Domain.EngineerOfRecord eor)
+    {
+        isEditing = true;
+        editingId = eor.Id;
+        form = new EorForm
+        {
+            SelectedEmployeeId = eor.VantagepointEmployeeId,
+            EmployeeDisplay = eor.Employee.DisplayName,
+            Discipline = eor.Discipline,
+            LicenseExpiration = eor.LicenseExpiration,
+            IsActive = eor.IsActive,
+            SelectedStates = [.. eor.LicensedStates]
+        };
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private void ToggleState(UsState state, bool isChecked)
+    {
+        if (isChecked && !form.SelectedStates.Contains(state)) form.SelectedStates.Add(state);
+        else if (!isChecked) form.SelectedStates.Remove(state);
+    }
+
+    // ── Display helpers ──
+
+    private static string Initials(Employee emp)
+    {
+        var first = string.IsNullOrEmpty(emp.FirstName) ? "" : emp.FirstName[..1];
+        var last = string.IsNullOrEmpty(emp.LastName) ? "" : emp.LastName[..1];
+        return $"{first}{last}".ToUpper();
+    }
+
+    private static string AvatarClass(Discipline d) => d switch
+    {
+        Discipline.Electrical => "av-blue",
+        Discipline.Mechanical => "av-green",
+        Discipline.Multi => "av-purple",
+        _ => "av-blue"
+    };
+
+    private static string BadgeClass(Discipline d) => d switch
+    {
+        Discipline.Electrical => "badge-blue",
+        Discipline.Mechanical => "badge-green",
+        Discipline.Multi => "badge-purple",
+        _ => "badge-blue"
+    };
+
+    // ── Form model ──
+
+    private class EorForm
+    {
+        public string SelectedEmployeeId { get; set; } = "";
+        public string EmployeeDisplay { get; set; } = "";
+        public Discipline Discipline { get; set; }
+        public DateTime LicenseExpiration { get; set; } = DateTime.Today.AddYears(2);
+        public bool IsActive { get; set; } = true;
+        public List<UsState> SelectedStates { get; set; } = [];
+    }
+}

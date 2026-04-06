@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls /c/Users/JGregory2/source/repos/ResourcePlanningv3/ClassLibrary/Services/*.cs)",
+      "Bash(grep -l \"dataStore.Read\\\\|dataStore.Execute\\\\|dataAccess.Read\" /c/Users/JGregory2/source/repos/ResourcePlanningv3/ClassLibrary/Services/*.cs)",
+      "WebSearch",
+      "WebFetch(domain:www.fullsailpartners.com)",
+      "WebFetch(domain:vantagepointapi.deltek.com)",
+      "WebFetch(domain:help.deltek.com)",
+      "WebFetch(domain:steepvalley.net)",
+      "WebFetch(domain:www.postman.com)",
+      "WebFetch(domain:rhodiumdigital.io)",
+      "WebFetch(domain:www.workato.com)",
+      "Bash(xargs grep:*)",
+      "Bash(find C:\\\\Users\\\\JGregory2\\\\source\\\\repos\\\\ResourcePlanningv3:*)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet new:*)",
+      "Bash(dotnet sln:*)",
+      "Bash(dotnet add:*)",
+      "Read(//c/Users/JGregory2/AppData/Roaming/NuGet/**)",
+      "Bash(dotnet nuget:*)",
+      "Bash(dotnet tool:*)",
+      "Bash(dotnet ef:*)",
+      "Bash(dotnet run:*)",
+      "Bash(taskkill //F //PID 19072)",
+      "Bash(taskkill //F //IM \"EngineerOfRecord.Blazor.exe\")"
+    ]
+  }
+}

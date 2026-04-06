@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="./EngineerOfRecord.Blazor/EngineerOfRecord.Blazor.csproj" Id="49a46095-da26-4943-bb28-99a7c38f884c" />
+  <Project Path="./EngineerOfRecord.Domain/EngineerOfRecord.Domain.csproj" />
+  <Project Path="./EngineerOfRecord.Persistence/EngineerOfRecord.Persistence.csproj" />
+</Solution>
