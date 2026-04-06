@@ -68,8 +68,10 @@ public class VantagepointSyncHandler(
 
         await db.SaveChangesAsync();
 
+#pragma warning disable CA1873 // Avoid potentially expensive logging
         logger.LogDebug("Synced VP employee {EmployeeId} ({Name})",
             data.EmployeeId, $"{data.PreferredName} {data.LastName}");
+#pragma warning restore CA1873 // Avoid potentially expensive logging
     }
 
     /// <summary>
